@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# sb-pause — stop the Shadowbroker stack without removing it.
+# Containers + volume preserved. Resource use drops to 0% CPU / 0 MB RAM.
+# Resume with `./sb-resume` (5s warm restart, no rebuild, caches intact).
+set -euo pipefail
+cd "$(dirname "$0")"
+docker compose stop
+echo "stopped. resume with: ./sb-resume"

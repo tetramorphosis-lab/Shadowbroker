@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# sb-up — materialize .env from macOS keychain (via keysafe), bring the
+# Shadowbroker stack up, then remove .env so plaintext credentials don't
+# linger on disk. Containers retain env after `up`; `compose ps/logs/exec`
+# will warn about unsubstituted vars but still work.
+#
+# Usage:  ./sb-up                # up -d
+#         ./sb-up --pull         # pull then up -d
+#         ./sb-up --no-cleanup   # leave .env on disk (debugging only)
+set -euo pipefail
+cd "$(dirname "$0")"
+
+NEED=(
+  shadowbroker.opensky-client-id:OPENSKY_CLIENT_ID
+  shadowbroker.opensky-client-secret:OPENSKY_CLIENT_SECRET
+)
+OPTIONAL=(
+  shadowbroker.ais-api-key:AIS_API_KEY
+  shadowbroker.finnhub-api-key:FINNHUB_API_KEY
+  shadowbroker.lta-account-key:LTA_ACCOUNT_KEY
+  shadowbroker.shodan-api-key:SHODAN_API_KEY
+  shadowbroker.admin-key:ADMIN_KEY
+)
+
+DO_PULL=0
+CLEANUP=1
+for arg in "$@"; do
+  case "$arg" in
+    --pull) DO_PULL=1 ;;
+    --no-cleanup) CLEANUP=0 ;;
+  esac
+done
+
+umask 077
+> .env
+trap 'if [ "$CLEANUP" -eq 1 ]; then rm -P .env 2>/dev/null || rm -f .env; fi' EXIT
+
+emit() {
+  local entry="$1" required="$2"
+  local key="${entry%%:*}" var="${entry##*:}"
+  local val
+  val="$(keysafe get "$key" 2>/dev/null | tr -d '\r\n' || true)"
+  if [ -z "$val" ]; then
+    if [ "$required" = "yes" ]; then
+      echo "ERROR: required keysafe entry missing: $key" >&2
+      exit 1
+    fi
+    return
+  fi
+  printf '%s=%s\n' "$var" "$val" >> .env
+  echo "  + $var (from $key)"
+}
+
+echo "rendering .env from keychain:"
+for e in "${NEED[@]}"; do emit "$e" yes; done
+for e in "${OPTIONAL[@]}"; do emit "$e" no; done
+
+if [ "$DO_PULL" -eq 1 ]; then
+  echo "--- docker compose pull ---"
+  docker compose pull
+fi
+
+echo "--- docker compose up -d ---"
+docker compose up -d
+echo "--- status ---"
+docker compose ps

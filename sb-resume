@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# sb-resume — restart a paused Shadowbroker stack.
+# Re-materializes .env from keysafe (so env-baked secrets are fresh on the
+# off chance something rotated), then `docker compose start`.
+# Use this instead of `sb-up` when containers already exist; it's faster
+# and doesn't risk recreating containers (which used to break the
+# frontend↔backend bridge — see sb-up bug noted in CLAUDE.md).
+set -euo pipefail
+cd "$(dirname "$0")"
+
+# If containers don't exist yet, fall through to sb-up.
+if ! docker compose ps -q backend 2>/dev/null | grep -q .; then
+  echo "no containers — running sb-up instead"
+  exec ./sb-up "$@"
+fi
+
+# Materialize .env so docker compose can read it for substitution
+# (start doesn't strictly need it but ps/logs/exec complain without).
+umask 077
+> .env
+trap 'rm -P .env 2>/dev/null || rm -f .env' EXIT
+
+ID=$(keysafe get shadowbroker.opensky-client-id 2>/dev/null | tr -d '\r\n' || true)
+SECRET=$(keysafe get shadowbroker.opensky-client-secret 2>/dev/null | tr -d '\r\n' || true)
+[ -n "$ID" ] && printf 'OPENSKY_CLIENT_ID=%s\n' "$ID" >> .env
+[ -n "$SECRET" ] && printf 'OPENSKY_CLIENT_SECRET=%s\n' "$SECRET" >> .env
+
+docker compose start
+echo "starting. open http://127.0.0.1:3010/ — give feeds ~30s–2min to re-warm"
